@@ -3,11 +3,11 @@ import geopandas as gpd
 import osmnx as ox
 from shapely.geometry import Point
 
-# Load BlueBike stations
+# load BlueBike stations
 df = pd.read_csv("data/Blue_Bike_Stations.csv")
 
 
-# Convert to GeoDataFrame (Longitude, Latitude → Points)
+# covert to GeoDataFrame
 gdf_stations = gpd.GeoDataFrame(
     df,
     geometry=gpd.points_from_xy(df.Longitude, df.Latitude),
@@ -16,28 +16,26 @@ gdf_stations = gpd.GeoDataFrame(
 
 place_name = "Cambridge, Massachusetts, USA"
 
-# Download OSM landuse polygons
+# download and keep landuse polygons
 landuse = ox.features_from_place(place_name, tags={"landuse": True})
-# Keep only polygons and multipolygons
 landuse = landuse[landuse.geometry.type.isin(["Polygon", "MultiPolygon"])]
 
 print(landuse["landuse"].value_counts().head())
 
-# Download amenities
+# download and keep amenities
 amenity = ox.features_from_place(place_name, tags={"amenity": True})
-# keep only relevant geoms
 amenity = amenity[amenity.geometry.notna()]
 
 print(amenity["amenity"].value_counts().head())
 
 
-# Match CRS (needed before spatial join or measuring distances)
+# match CRS
 gdf_stations = gdf_stations.to_crs(landuse.crs)
 # match amenities to stations
 amenity = amenity.to_crs(landuse.crs)
 
 
-# Join stations to landuse polygons
+# join stations to landuse polygons
 joined = gpd.sjoin(
     gdf_stations,
     landuse[["landuse", "geometry"]],
@@ -56,21 +54,22 @@ joined = gpd.sjoin(
     rsuffix="amenity"
 )
 
-# Identify stations not inside any polygon
+# identify stations not inside any polygon
 missing = joined[joined["landuse"].isna()].copy()
 
-MAX_DIST = 50  # max distance threshold
+# max distance threshold
+MAX_DIST = 50  
 
-# Project both datasets into a metric CRS  
+# project both datasets into a metric CRS  
 METRIC = "EPSG:26986"
 
-# Project for distance calculation
+# project for distance calculation
 stations_m = gdf_stations.to_crs(METRIC)
 landuse_m = landuse.to_crs(METRIC)
 amenity_m = amenity.to_crs(METRIC)
 joined_m = joined.to_crs(METRIC)
 
-# --- Missing landuse
+# to take care of missing landuse
 missing_land = joined_m[joined_m["landuse"].isna()].copy()
 missing_land = missing_land[missing_land.geometry.notna() & (~missing_land.geometry.is_empty)].copy()
 
@@ -89,11 +88,11 @@ if len(missing_land) > 0:
 
     print(missing_land.nunique())
 
-    # Compute nearest landuse polygon and distance for each missing station
+    # compute nearest landuse polygon and distance for each missing station
     for geom in missing_land.geometry:
-        dist_series = landuse_m.distance(geom)          # distances to all polygons
-        nearest_idx.append(dist_series.idxmin())        # nearest polygon index
-        dists.append(dist_series.min())                 # nearest distance
+        dist_series = landuse_m.distance(geom)          
+        nearest_idx.append(dist_series.idxmin())       
+        dists.append(dist_series.min())               
     
 
     print(len(nearest_idx), len(dists), orig_idx.nunique())
@@ -101,13 +100,13 @@ if len(missing_land) > 0:
     print("orig", orig_idx)
 
 
-    # Assign landuse only if within MAX_DIST
+    # assign landuse only if within MAX_DIST
     # joined.loc[orig_idx, "landuse"] = [
     #     landuse_m.loc[idx]["landuse"] if dist <= MAX_DIST else None
     #     for idx, dist in zip(nearest_idx, dists)
     # ]
 
-    # Assign landuse only if within MAX_DIST, row by row
+    # assign landuse only if within MAX_DIST
     for station_idx, (landuse_idx, dist) in zip(orig_idx, zip(nearest_idx, dists)):
         if landuse_idx is not None and dist <= MAX_DIST:
             joined.at[station_idx, "landuse"] = landuse_m.loc[landuse_idx, "landuse"]
@@ -115,7 +114,7 @@ if len(missing_land) > 0:
             joined.at[station_idx, "landuse"] = None
 
 
-# --- Missing amenity
+# to take care of missing amenity
 missing_am = joined_m[joined_m["amenity"].isna()].copy()
 
 if len(missing_am) > 0:
@@ -129,7 +128,7 @@ if len(missing_am) > 0:
     nearest_idx = []
     dists = []
 
-    # Compute nearest amenity polygon and distance for each missing station
+    # compute nearest amenity polygon and distance for each missing station
     for geom in missing_am.geometry:
         dist_series = amenity_m_valid.distance(geom)
         nearest_idx.append(dist_series.idxmin())
@@ -141,8 +140,11 @@ if len(missing_am) > 0:
         else:
             joined.at[station_idx, "amenity"] = None
 
-# Export
+# export
 joined.to_csv("bluebike_with_landuseAmenity.csv", index=False)
+
+
+# example test to see if it works
 
 ale_idx = joined[joined['Name'] == 'Ames St at Main St'].index
 for idx in ale_idx:
